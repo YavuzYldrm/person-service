@@ -1,0 +1,40 @@
+{
+  "name": "person-service",
+  "version": "1.0.0",
+  "description": "Basic person service with Node.js + TypeScript stack",
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk --app \"tsx --tsconfig infra/tsconfig.json infra/bin/person-service.ts\"",
+    "synth": "npm run cdk -- synth -c stage=dev",
+    "bootstrap": "npm run cdk -- bootstrap",
+    "deploy:dev": "tsx scripts/deploy-dev.ts",
+    "deploy:prod": "npm run cdk -- deploy -c stage=prod",
+    "destroy:dev": "npm run cdk -- destroy -c stage=dev",
+    "destroy:prod": "npm run cdk -- destroy -c stage=prod",
+    "test": "vitest run tests/unit",
+    "test:watch": "vitest tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:typecheck": "tsc --project tsconfig.test.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.163",
+    "@types/node": "^26.4.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1127.0",
+    "@aws-sdk/client-sns": "^3.1127.0",
+    "@aws-sdk/lib-dynamodb": "^3.1127.0",
+    "aws-cdk": "^2.1140.0",
+    "aws-cdk-lib": "^2.268.0",
+    "constructs": "^10.8.1",
+    "esbuild": "^0.28.2",
+    "zod": "^4.5.4"
+  }
+}
