@@ -6,17 +6,10 @@ import {
 import { personItem } from "../../fixtures/person";
 
 describe("person mapper", () => {
-  it("maps a persistence item to a response without internal failure metadata", () => {
-    const result = toPersonResponseDto({
-      ...personItem,
-      eventPublishFailure: {
-        failedAt: "2026-09-07T10:01:00.000Z",
-        errorMessage: "SNS unavailable",
-      },
-    });
+  it("maps a persistence item to a response", () => {
+    const result = toPersonResponseDto(personItem);
 
     expect(result).toEqual(personItem);
-    expect(result).not.toHaveProperty("eventPublishFailure");
   });
 
   it("maps every persistence item in a list", () => {

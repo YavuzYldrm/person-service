@@ -1,13 +1,8 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { PersonItem } from "../dto/person-item.type";
 
 const tableName = process.env.PERSON_TABLE_NAME;
-
-type EventPublishFailure = {
-    failedAt: string;
-    errorMessage?: string;
-  };
 
 if(!tableName) { throw new Error("PERSON_TABLE_NAME environment variable is not defined"); }
 
@@ -29,22 +24,3 @@ export const listPersons = async (): Promise<PersonItem[]> => {
 
     return (result.Items ?? []) as PersonItem[];
 }
-
-export const saveEventPublishFailure = async (
-    personId: string,
-    failure: EventPublishFailure,
-  ): Promise<void> => {
-    await documentClient.send(
-      new UpdateCommand({
-        TableName: tableName,
-        Key: {
-          id: personId,
-        },
-        UpdateExpression: "SET eventPublishFailure = :eventPublishFailure",
-        ExpressionAttributeValues: {
-          ":eventPublishFailure": failure,
-        },
-        ConditionExpression: "attribute_exists(id)",
-      }),
-    );
-  };

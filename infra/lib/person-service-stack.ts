@@ -1,13 +1,17 @@
-import { CfnOutput, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { StageConfig } from "../config/stage-config";
-import { Runtime } from "aws-cdk-lib/aws-lambda";
+import { Runtime, FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as path from "node:path";
+import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
 
 
 
@@ -27,12 +31,33 @@ export class PersonServiceStack extends Stack {
             partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
             removalPolicy: RemovalPolicy.DESTROY,
+            stream: dynamodb.StreamViewType.NEW_IMAGE,
         });
 
         const personCreatedTopic = new sns.Topic(this, "PersonCreatedTopic", {
-            topicName: `${baseName}-person-created-topic`,
+            topicName: `${baseName}-person-created-topic.fifo`,
             displayName: "Person Created Topic",
+            fifo: true,
+            contentBasedDeduplication: false,
         });
+
+        const alertEmail = new CfnParameter(this, "AlertEmail", {
+            type: "String",
+            description: "Email address to receive alerts for person-created events",
+        });
+
+        const publisherAlertTopic = new sns.Topic(
+            this, "PublisherAlertTopic", {
+                topicName: `${baseName}-publisher-alert-topic`,
+                displayName: "Publisher Alert Topic",
+            }
+        );
+
+        publisherAlertTopic.applyRemovalPolicy(RemovalPolicy.DESTROY);
+
+        publisherAlertTopic.addSubscription(
+            new subscriptions.EmailSubscription(alertEmail.valueAsString)
+        );
 
         personCreatedTopic.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
@@ -43,7 +68,6 @@ export class PersonServiceStack extends Stack {
             runtime: Runtime.NODEJS_24_X,
             environment: {
                 PERSON_TABLE_NAME: personTable.tableName,
-                PERSON_CREATED_TOPIC_ARN: personCreatedTopic.topicArn,
             },
         });
 
@@ -57,14 +81,53 @@ export class PersonServiceStack extends Stack {
             },
           });
 
+        const publishPersonCreatedLambda = new NodejsFunction(this, "PublishPersonCreatedLambda", {
+            functionName: `${baseName}-publish-person-created`,
+            runtime: Runtime.NODEJS_24_X,
+            entry: path.join(__dirname, "../../src/handlers/publish-person-created.ts"),
+            handler: "publishPersonCreatedHandler",
+            environment: {
+                PERSON_CREATED_TOPIC_ARN: personCreatedTopic.topicArn,
+            },
+        });
+
+        const publisherErrorAlarm = new cloudwatch.Alarm(
+            this,
+            "PublisherErrorAlarm",
+            {
+                alarmName: `${baseName}-publisher-errors`,
+                alarmDescription: "Alerts when the Publisher Lambda fails to publish a person-created event to SNS",
+                threshold: 1,
+                metric: publishPersonCreatedLambda.metricErrors({
+                    period: Duration.minutes(1),
+                    statistic: "Sum",
+                }),
+                evaluationPeriods: 1,
+                datapointsToAlarm: 1,
+                comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING, 
+            }
+        );
+
+        publisherErrorAlarm.addAlarmAction( new cloudwatchActions.SnsAction(publisherAlertTopic));
+
         personTable.grant(
             createPersonLambda,
             "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
         );
         personTable.grantReadData(listPersonLambda);
 
-        personCreatedTopic.grantPublish(createPersonLambda);
+        personCreatedTopic.grantPublish(publishPersonCreatedLambda);
+
+        publishPersonCreatedLambda.addEventSource(
+            new DynamoEventSource(personTable, {
+                startingPosition: StartingPosition.LATEST,
+                batchSize: 1,
+                filters: [FilterCriteria.filter({
+                    eventName: FilterRule.isEqual("INSERT"),
+                })]
+            })
+        );
 
         const httpApi = new HttpApi(this, "PersonHttpApi", {
             apiName: `${baseName}-http-api`,

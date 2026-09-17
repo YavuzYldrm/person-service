@@ -2,7 +2,10 @@ import type {
   APIGatewayProxyHandlerV2,
   APIGatewayProxyStructuredResultV2,
   Context,
+  DynamoDBRecord,
+  DynamoDBStreamEvent,
 } from "aws-lambda";
+import { marshall } from "@aws-sdk/util-dynamodb";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiGatewayEvent } from "../../fixtures/api-gateway-event";
@@ -10,6 +13,7 @@ import {
   createdAt,
   personId,
   personItem,
+  streamEventId,
   validCreatePersonRequest,
 } from "../../fixtures/person";
 
@@ -56,6 +60,7 @@ const errorResponseContractSchema = z.strictObject({
 });
 
 const personCreatedEventContractSchema = z.strictObject({
+  eventId: z.string().min(1),
   eventType: z.literal("person-created"),
   publishedAt: timestampSchema,
   person: personResponseContractSchema,
@@ -65,7 +70,6 @@ const mocks = vi.hoisted(() => ({
   randomUUID: vi.fn(),
   savePerson: vi.fn(),
   listPersonItems: vi.fn(),
-  saveEventPublishFailure: vi.fn(),
   publishPersonCreated: vi.fn(),
   logInfo: vi.fn(),
   logError: vi.fn(),
@@ -78,7 +82,6 @@ vi.mock("node:crypto", () => ({
 vi.mock("../../../src/repository/person-repository", () => ({
   savePerson: mocks.savePerson,
   listPersons: mocks.listPersonItems,
-  saveEventPublishFailure: mocks.saveEventPublishFailure,
 }));
 
 vi.mock("../../../src/publisher/person-event-publisher", () => ({
@@ -97,6 +100,7 @@ vi.mock("../../../src/utils/logger", () => ({
 
 import { createPersonHandler } from "../../../src/handlers/create-person";
 import { listPersonHandler } from "../../../src/handlers/list-person";
+import { publishPersonCreatedHandler } from "../../../src/handlers/publish-person-created";
 
 const invoke = async (
   handler: APIGatewayProxyHandlerV2,
@@ -112,6 +116,27 @@ const invoke = async (
   return result as APIGatewayProxyStructuredResultV2;
 };
 
+const invokePublisher = async (): Promise<void> => {
+  const newImage = marshall(personItem) as unknown as NonNullable<
+    NonNullable<DynamoDBRecord["dynamodb"]>["NewImage"]
+  >;
+  const event: DynamoDBStreamEvent = {
+    Records: [
+      {
+        eventID: streamEventId,
+        eventName: "INSERT",
+        dynamodb: { NewImage: newImage },
+      },
+    ],
+  };
+
+  await publishPersonCreatedHandler(
+    event,
+    {} as Context,
+    vi.fn(),
+  );
+};
+
 describe("Person Service contracts", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -121,7 +146,6 @@ describe("Person Service contracts", () => {
     mocks.randomUUID.mockReturnValue(personId);
     mocks.savePerson.mockResolvedValue(undefined);
     mocks.listPersonItems.mockResolvedValue([]);
-    mocks.saveEventPublishFailure.mockResolvedValue(undefined);
     mocks.publishPersonCreated.mockResolvedValue(undefined);
   });
 
@@ -129,7 +153,7 @@ describe("Person Service contracts", () => {
     vi.useRealTimers();
   });
 
-  it("matches the create response and person-created event contracts", async () => {
+  it("matches the create response contract", async () => {
     const response = await invoke(
       createPersonHandler,
       "POST",
@@ -140,6 +164,11 @@ describe("Person Service contracts", () => {
     expect(
       createPersonResponseContractSchema.parse(JSON.parse(response.body ?? "")),
     ).toEqual({ id: personId });
+    expect(mocks.publishPersonCreated).not.toHaveBeenCalled();
+  });
+
+  it("matches the person-created event contract", async () => {
+    await invokePublisher();
 
     expect(mocks.publishPersonCreated).toHaveBeenCalledOnce();
     expect(
@@ -147,6 +176,7 @@ describe("Person Service contracts", () => {
         mocks.publishPersonCreated.mock.calls[0]?.[0],
       ),
     ).toMatchObject({
+      eventId: streamEventId,
       eventType: "person-created",
       person: {
         id: personId,

@@ -1,4 +1,5 @@
 export type PersonCreatedEvent = {
+    eventId: string;
     eventType: "person-created";
     publishedAt: string;
     person: {

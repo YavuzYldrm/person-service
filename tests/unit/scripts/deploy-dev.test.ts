@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -17,6 +17,7 @@ vi.mock("node:fs", () => ({
 
 import {
   deployDev,
+  resolveAlertEmail,
   resolveSmokeEnvironment,
 } from "../../../scripts/deploy-dev";
 
@@ -27,11 +28,35 @@ const cdkOutputs = {
   },
 };
 
+const originalAlertEmail = process.env.ALERT_EMAIL;
+
 describe("dev deployment runner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.ALERT_EMAIL = "alerts@example.com";
     mocks.spawnSync.mockReturnValue({ status: 0 });
     mocks.readFileSync.mockReturnValue(JSON.stringify(cdkOutputs));
+  });
+
+  afterEach(() => {
+    if (originalAlertEmail === undefined) {
+      delete process.env.ALERT_EMAIL;
+      return;
+    }
+
+    process.env.ALERT_EMAIL = originalAlertEmail;
+  });
+
+  it("resolves and trims the alert email", () => {
+    expect(
+      resolveAlertEmail({ ALERT_EMAIL: " alerts@example.com " }),
+    ).toBe("alerts@example.com");
+  });
+
+  it("fails when the alert email is unavailable", () => {
+    expect(() => resolveAlertEmail({})).toThrow(
+      "ALERT_EMAIL environment variable is not set or empty",
+    );
   });
 
   it("resolves dev integration test values from CDK outputs", () => {
@@ -71,6 +96,8 @@ describe("dev deployment runner", () => {
       "deploy",
       "-c",
       "stage=dev",
+      "--parameters",
+      "AlertEmail=alerts@example.com",
       "--outputs-file",
       "/project/cdk-outputs.dev.json",
     ]);

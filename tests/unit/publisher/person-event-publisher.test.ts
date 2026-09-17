@@ -28,7 +28,8 @@ import { publishPersonCreated } from "../../../src/publisher/person-event-publis
 describe("person event publisher", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.PERSON_CREATED_TOPIC_ARN = "arn:aws:sns:eu-west-1:111111111111:person-created";
+    process.env.PERSON_CREATED_TOPIC_ARN =
+      "arn:aws:sns:eu-west-1:111111111111:person-created.fifo";
     mocks.send.mockResolvedValue({ MessageId: "message-id" });
   });
 
@@ -44,13 +45,17 @@ describe("person event publisher", () => {
     await publishPersonCreated(personCreatedEvent);
 
     expect(mocks.PublishCommand).toHaveBeenCalledWith({
-      TopicArn: "arn:aws:sns:eu-west-1:111111111111:person-created",
+      TopicArn: "arn:aws:sns:eu-west-1:111111111111:person-created.fifo",
       Message: JSON.stringify(personCreatedEvent),
+      MessageDeduplicationId: personCreatedEvent.eventId,
+      MessageGroupId: personCreatedEvent.person.id,
     });
     expect(mocks.send).toHaveBeenCalledWith({
       input: {
-        TopicArn: "arn:aws:sns:eu-west-1:111111111111:person-created",
+        TopicArn: "arn:aws:sns:eu-west-1:111111111111:person-created.fifo",
         Message: JSON.stringify(personCreatedEvent),
+        MessageDeduplicationId: personCreatedEvent.eventId,
+        MessageGroupId: personCreatedEvent.person.id,
       },
     });
   });

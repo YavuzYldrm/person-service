@@ -16,6 +16,8 @@ export const publishPersonCreated = async (event: PersonCreatedEvent): Promise<v
         new PublishCommand({
             TopicArn: topicArn,
             Message: JSON.stringify(event),
+            MessageDeduplicationId: event.eventId, // For FIFO topics, ensure idempotency   
+            MessageGroupId: event.person.id,
     }));};
 
 

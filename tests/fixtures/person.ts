@@ -3,6 +3,7 @@ import type { PersonItem } from "../../src/dto/person-item.type";
 import type { CreatePersonRequestDto } from "../../src/validation/create-person.schema";
 
 export const personId = "de305d54-75b4-431b-adb2-eb6b9e546014";
+export const streamEventId = "stream-event-id";
 export const createdAt = "2026-09-07T10:00:00.000Z";
 
 export const validCreatePersonRequest: CreatePersonRequestDto = {
@@ -25,6 +26,7 @@ export const personItem: PersonItem = {
 };
 
 export const personCreatedEvent: PersonCreatedEvent = {
+  eventId: streamEventId,
   eventType: "person-created",
   publishedAt: createdAt,
   person: personItem,

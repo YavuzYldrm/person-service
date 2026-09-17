@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createdAt, personId, personItem } from "../../fixtures/person";
+import { personItem } from "../../fixtures/person";
 
 const mocks = vi.hoisted(() => {
   const send = vi.fn();
@@ -16,9 +16,6 @@ const mocks = vi.hoisted(() => {
     ScanCommand: vi.fn(function (input: unknown) {
       return { command: "scan", input };
     }),
-    UpdateCommand: vi.fn(function (input: unknown) {
-      return { command: "update", input };
-    }),
   };
 });
 
@@ -32,7 +29,6 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
   },
   PutCommand: mocks.PutCommand,
   ScanCommand: mocks.ScanCommand,
-  UpdateCommand: mocks.UpdateCommand,
 }));
 
 let repository: typeof import("../../../src/repository/person-repository");
@@ -73,25 +69,6 @@ describe("person repository", () => {
     mocks.send.mockResolvedValueOnce({});
 
     await expect(repository.listPersons()).resolves.toEqual([]);
-  });
-
-  it("stores event publish failure metadata for an existing person", async () => {
-    const failure = {
-      failedAt: createdAt,
-      errorMessage: "SNS unavailable",
-    };
-
-    await repository.saveEventPublishFailure(personId, failure);
-
-    expect(mocks.UpdateCommand).toHaveBeenCalledWith({
-      TableName: "person-table",
-      Key: { id: personId },
-      UpdateExpression: "SET eventPublishFailure = :eventPublishFailure",
-      ExpressionAttributeValues: {
-        ":eventPublishFailure": failure,
-      },
-      ConditionExpression: "attribute_exists(id)",
-    });
   });
 
   it("propagates DynamoDB client errors", async () => {

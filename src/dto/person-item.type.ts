@@ -11,8 +11,4 @@ export type PersonItem = {
         postcode: string;
     };
     createdAt: string;
-    eventPublishFailure?: {
-        failedAt: string;
-        errorMessage?: string;
-    };
 }

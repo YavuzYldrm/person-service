@@ -11,9 +11,10 @@ flowchart LR
     Client[API client] --> Api[API Gateway HTTP API]
     Api -->|POST /person| CreateLambda[Create Person Lambda]
     Api -->|GET /person| ListLambda[List Person Lambda]
-    CreateLambda -->|PutItem / UpdateItem| Table[(DynamoDB Person table)]
+    CreateLambda -->|PutItem| Table[(DynamoDB Person table)]
     ListLambda -->|Scan| Table
-    CreateLambda -->|Publish person-created| Topic[Amazon SNS topic]
+    Table -->|INSERT via DynamoDB Stream| PublisherLambda[Publish Person Created Lambda]
+    PublisherLambda -->|Publish person-created| Topic[Amazon SNS topic]
     Topic -.-> Landscape[Microservice landscape]
 ```
 
@@ -33,6 +34,7 @@ sequenceDiagram
     participant Validation as Zod schema
     participant Service as Person service
     participant Table as DynamoDB
+    participant Publisher as Publisher Lambda
     participant Topic as SNS topic
 
     Client->>Api: POST /person
@@ -43,31 +45,34 @@ sequenceDiagram
     alt Request is invalid
         Validation-->>Handler: Validation errors
         Handler-->>Api: 400 Bad Request
+        Api-->>Client: 400 response
     else Request is valid
         Validation-->>Handler: Normalized request DTO
         Handler->>Service: createPerson DTO
         Service->>Service: Generate ID and timestamp
         Service->>Table: PutItem person
         Table-->>Service: Person stored
-        Service->>Topic: Publish person-created event
-
-        alt SNS publish fails after retries
-            Topic-->>Service: Publish error
-            Service->>Table: UpdateItem failure metadata
-        else SNS publish succeeds
-            Topic-->>Service: Event accepted
-        end
-
         Service-->>Handler: Created person ID
         Handler-->>Api: 201 Created
-    end
+        Api-->>Client: 201 response
 
-    Api-->>Client: HTTP response
+        Table-->>Publisher: INSERT stream record
+        Publisher->>Publisher: Unmarshall and validate NewImage
+        Publisher->>Topic: Publish person-created event
+
+        alt SNS publish succeeds
+            Topic-->>Publisher: Event accepted
+        else SNS publish fails
+            Topic-->>Publisher: Publish error
+            Publisher->>Publisher: Throw error for stream retry
+        end
+    end
 ```
 
-Request parsing and validation are synchronous. DynamoDB and SNS calls return
-promises and are awaited in sequence, so the event is not published unless the
-person has first been stored.
+Request parsing and validation happen in the Create Lambda. The DynamoDB write
+is awaited before the API returns `201 Created`. Event publishing is
+asynchronous: a successful insert produces a DynamoDB Stream record that
+invokes the Publisher Lambda, so the API does not wait for SNS.
 
 ### `GET /person`
 
@@ -103,6 +108,7 @@ sequenceDiagram
 - AWS CDK
 - API Gateway HTTP API
 - DynamoDB in on-demand billing mode
+- DynamoDB Streams
 - Amazon SNS Standard topic
 - AWS SDK for JavaScript v3
 - Zod request validation
@@ -192,8 +198,9 @@ error details.
 
 ## Person-created Event
 
-After the person has been stored, the create Lambda publishes the following
-event to SNS:
+After the person has been stored, DynamoDB Streams invokes the Publisher
+Lambda. It converts the stream `NewImage` to a normal object, validates it with
+Zod, and publishes the following event to SNS:
 
 ```json
 {
@@ -217,9 +224,14 @@ event to SNS:
 ```
 
 The SNS client uses `maxAttempts: 3`, meaning one initial request and up to two
-SDK-managed retries for retryable failures. If publishing still fails, failure
-metadata is added to the stored person using DynamoDB `UpdateItem`. The person
-remains created and its ID is returned to the API client.
+SDK-managed retries for retryable failures. If publishing still fails, the
+Publisher Lambda logs the error without person PII and throws it again so the
+DynamoDB Stream event source mapping can retry the record. No failure queue or
+failure metadata is currently stored.
+
+DynamoDB Streams and Lambda provide at-least-once processing, so consumers
+should tolerate duplicate `person-created` events. Event publication is
+eventually consistent with the API response.
 
 ## Project Structure
 
@@ -232,7 +244,7 @@ scripts/
   deploy-dev.ts  Deploys dev, runs smoke tests, and cleans temporary outputs
 src/
   dto/          API, persistence, and event data types
-  handlers/     API Gateway Lambda handlers
+  handlers/     API Gateway and DynamoDB Stream Lambda handlers
   mappers/      Response and validation error mapping
   publisher/    SNS event publisher
   repository/   DynamoDB operations
@@ -272,7 +284,7 @@ Use `npm run test:watch` while developing to rerun affected tests after file
 changes. Unit tests run without connecting to an AWS account; AWS SDK clients
 are mocked and CDK tests assert against the generated CloudFormation template.
 
-The unit suite also executes the real handlers and service with mocked AWS
+The unit suite also executes the real API and stream handlers with mocked AWS
 adapters, then validates API response bodies and the published event against
 runtime Zod contracts.
 
@@ -324,7 +336,7 @@ flowchart TD
     DevCdk --> DeployResult{Deployment succeeded?}
     DeployResult -->|Yes| DevStack[CloudFormation dev stack]
     DeployResult -->|No| KeepAssembly[Keep cdk.out for debugging]
-    DevStack --> DevResources[Dev API, Lambdas, DynamoDB and SNS]
+    DevStack --> DevResources[Dev API, three Lambdas, DynamoDB Stream and SNS]
     DevStack --> Outputs[Temporary CDK outputs JSON]
     Outputs --> TestEnvironment[Resolve API URL, table name and region]
     DevResources --> Smoke[Run integration tests as smoke tests]
@@ -342,7 +354,7 @@ flowchart TD
 flowchart TD
     ProdCommand[npm run deploy:prod] --> ProdCdk[CDK deploy with stage prod]
     ProdCdk --> ProdStack[CloudFormation prod stack]
-    ProdStack --> ProdResources[Prod API, Lambdas, DynamoDB and SNS]
+    ProdStack --> ProdResources[Prod API, three Lambdas, DynamoDB Stream and SNS]
     ProdResources --> Complete[Deployment complete]
     Complete -.-> NoSmoke[No smoke tests or test data]
 ```

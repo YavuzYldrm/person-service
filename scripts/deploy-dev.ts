@@ -5,6 +5,18 @@ import { stageConfigs } from "../infra/config/stage-config";
 
 type CdkOutputs = Record<string, Record<string, unknown>>;
 
+export const resolveAlertEmail = (
+  env: NodeJS.ProcessEnv = process.env,
+): string => {
+  const alertEmail = env.ALERT_EMAIL?.trim();
+
+  if(!alertEmail) {
+    throw new Error("ALERT_EMAIL environment variable is not set or empty");
+  }
+
+  return alertEmail;
+}
+
 export type SmokeEnvironment = {
   PERSON_API_URL: string;
   PERSON_TABLE_NAME: string;
@@ -60,6 +72,7 @@ const runNpmCommand = (
 };
 
 export const deployDev = (projectRoot = process.cwd()): void => {
+  const alertEmail = resolveAlertEmail();
   const outputFile = path.join(projectRoot, "cdk-outputs.dev.json");
   const cdkOutputDirectory = path.join(projectRoot, "cdk.out");
 
@@ -74,6 +87,8 @@ export const deployDev = (projectRoot = process.cwd()): void => {
         "deploy",
         "-c",
         "stage=dev",
+        "--parameters",
+        `AlertEmail=${alertEmail}`,
         "--outputs-file",
         outputFile,
       ],
