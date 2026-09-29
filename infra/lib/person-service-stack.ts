@@ -1,4 +1,4 @@
-import { CfnOutput, CfnParameter, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, Duration, RemovalPolicy, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { StageConfig } from "../config/stage-config";
 import { Runtime, FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
@@ -6,6 +6,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import { CoreServiceStack } from "core-cdk";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as path from "node:path";
@@ -19,11 +20,15 @@ type PersonServiceStackProps = StackProps & {
     stageConfig: StageConfig;
 };
 
-export class PersonServiceStack extends Stack {
+export class PersonServiceStack extends CoreServiceStack {
     constructor(scope: Construct, id: string, props: PersonServiceStackProps) {
-        super(scope, id , props);
+        const { stageConfig, ...stackProps } = props;
 
-        const { stageConfig } = props;
+        super(scope, id, {
+        ...stackProps,
+        serviceName: stageConfig.serviceName,
+        stage: stageConfig.stage,
+        });
         const baseName = `${stageConfig.serviceName}-${stageConfig.stage}`;
 
         const personTable = new dynamodb.Table(this, "PersonTable", {
