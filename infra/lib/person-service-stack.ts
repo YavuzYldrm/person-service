@@ -6,7 +6,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import { CoreServiceStack } from "core-cdk";
+import { CoreServiceStack, createDynamoTable } from "core-cdk";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as path from "node:path";
@@ -31,11 +31,21 @@ export class PersonServiceStack extends CoreServiceStack {
         });
         const baseName = `${stageConfig.serviceName}-${stageConfig.stage}`;
 
-        const personTable = new dynamodb.Table(this, "PersonTable", {
-            tableName: `${baseName}-person-table`,
-            partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+        // const personTable = new dynamodb.Table(this, "PersonTable", {
+        //     tableName: `${baseName}-person-table`,
+        //     partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+        //     billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        //     removalPolicy: RemovalPolicy.DESTROY,
+        //     stream: dynamodb.StreamViewType.NEW_IMAGE,
+        // });
+
+        const personTable = createDynamoTable(this, "PersonTable", {
+            resourceName: "person-table",
+            partitionKey: {
+              name: "id",
+              type: dynamodb.AttributeType.STRING,
+            },
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-            removalPolicy: RemovalPolicy.DESTROY,
             stream: dynamodb.StreamViewType.NEW_IMAGE,
         });
 
