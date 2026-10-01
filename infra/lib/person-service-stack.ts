@@ -1,15 +1,12 @@
-import { CfnOutput, CfnParameter, Duration, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { StageConfig } from "../config/stage-config";
 import { FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
 import { HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
-import { CoreServiceStack, createDynamoTable, createNodejsFunction, createSnsTopic, addHttpLambdaRoute, createHttpApi, addDynamoStreamToLambda } from "core-cdk";
+import { CoreServiceStack, createDynamoTable, createNodejsFunction, createSnsTopic, addHttpLambdaRoute, createHttpApi, addDynamoStreamToLambda, createLambdaErrorAlarm } from "core-cdk";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as path from "node:path";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
-import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
-import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
-import { Filter } from 'aws-cdk-lib/aws-sns';
 
 type PersonServiceStackProps = StackProps & {
     stageConfig: StageConfig;
@@ -113,25 +110,13 @@ export class PersonServiceStack extends CoreServiceStack {
             },
         );
 
-        const publisherErrorAlarm = new cloudwatch.Alarm(
-            this,
-            "PublisherErrorAlarm",
-            {
-                alarmName: `${baseName}-publisher-errors`,
-                alarmDescription: "Alerts when the Publisher Lambda fails to publish a person-created event to SNS",
-                threshold: 1,
-                metric: publishPersonCreatedLambda.metricErrors({
-                    period: Duration.minutes(1),
-                    statistic: "Sum",
-                }),
-                evaluationPeriods: 1,
-                datapointsToAlarm: 1,
-                comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-                treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING, 
-            }
-        );
-
-        publisherErrorAlarm.addAlarmAction( new cloudwatchActions.SnsAction(publisherAlertTopic));
+        createLambdaErrorAlarm(this, "PublisherErrorAlarm", {
+            resourceName: "publisher-errors",
+            handler: publishPersonCreatedLambda,
+            alertTopic: publisherAlertTopic,
+            alarmDescription:
+              "Alerts when the Publisher Lambda fails to publish a person-created event to SNS",
+          });
 
         personTable.grant(
             createPersonLambda,
