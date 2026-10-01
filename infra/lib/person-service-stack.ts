@@ -1,19 +1,15 @@
-import { CfnOutput, CfnParameter, Duration, RemovalPolicy, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, Duration, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { StageConfig } from "../config/stage-config";
 import { FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
-import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
-import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import { HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import { CoreServiceStack, createDynamoTable, createNodejsFunction } from "core-cdk";
+import { CoreServiceStack, createDynamoTable, createNodejsFunction, createSnsTopic, addHttpLambdaRoute, createHttpApi } from "core-cdk";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
-import * as sns from "aws-cdk-lib/aws-sns";
 import * as path from "node:path";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
-
-
 
 type PersonServiceStackProps = StackProps & {
     stageConfig: StageConfig;
@@ -30,14 +26,6 @@ export class PersonServiceStack extends CoreServiceStack {
         });
         const baseName = `${stageConfig.serviceName}-${stageConfig.stage}`;
 
-        // const personTable = new dynamodb.Table(this, "PersonTable", {
-        //     tableName: `${baseName}-person-table`,
-        //     partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
-        //     billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-        //     removalPolicy: RemovalPolicy.DESTROY,
-        //     stream: dynamodb.StreamViewType.NEW_IMAGE,
-        // });
-
         const personTable = createDynamoTable(this, "PersonTable", {
             resourceName: "person-table",
             partitionKey: {
@@ -48,32 +36,34 @@ export class PersonServiceStack extends CoreServiceStack {
             stream: dynamodb.StreamViewType.NEW_IMAGE,
         });
 
-        const personCreatedTopic = new sns.Topic(this, "PersonCreatedTopic", {
-            topicName: `${baseName}-person-created-topic.fifo`,
-            displayName: "Person Created Topic",
-            fifo: true,
-            contentBasedDeduplication: false,
-        });
+        const personCreatedTopic = createSnsTopic(
+            this,
+            "PersonCreatedTopic",
+            {
+                resourceName: "person-created-topic",
+                displayName: "Person Created Topic",
+                fifo: true,
+                contentBasedDeduplication: false,
+            }
+        );
 
         const alertEmail = new CfnParameter(this, "AlertEmail", {
             type: "String",
             description: "Email address to receive alerts for person-created events",
         });
 
-        const publisherAlertTopic = new sns.Topic(
-            this, "PublisherAlertTopic", {
-                topicName: `${baseName}-publisher-alert-topic`,
+       const publisherAlertTopic = createSnsTopic(
+            this,
+            "PublisherAlertTopic",
+            {
+                resourceName: "publisher-alert-topic",
                 displayName: "Publisher Alert Topic",
             }
-        );
-
-        publisherAlertTopic.applyRemovalPolicy(RemovalPolicy.DESTROY);
+        )
 
         publisherAlertTopic.addSubscription(
             new subscriptions.EmailSubscription(alertEmail.valueAsString)
         );
-
-        personCreatedTopic.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
         const createPersonLambda = createNodejsFunction(
             this, 
@@ -123,36 +113,6 @@ export class PersonServiceStack extends CoreServiceStack {
             },
         );
 
-        // const createPersonLambda = new NodejsFunction(this, "CreatePersonLambda", {
-        //     functionName: `${baseName}-create-person`,
-        //     entry: path.join(__dirname, "../../src/handlers/create-person.ts"),
-        //     handler: "createPersonHandler",
-        //     runtime: Runtime.NODEJS_24_X,
-        //     environment: {
-        //         PERSON_TABLE_NAME: personTable.tableName,
-        //     },
-        // });
-
-        // const listPersonLambda = new NodejsFunction(this, "ListPersonLambda", {
-        //     functionName: `${baseName}-list-person`,
-        //     runtime: Runtime.NODEJS_24_X,
-        //     entry: path.join(__dirname, "../../src/handlers/list-person.ts"),
-        //     handler: "listPersonHandler",
-        //     environment: {
-        //       PERSON_TABLE_NAME: personTable.tableName,
-        //     },
-        //   });
-
-        // const publishPersonCreatedLambda = new NodejsFunction(this, "PublishPersonCreatedLambda", {
-        //     functionName: `${baseName}-publish-person-created`,
-        //     runtime: Runtime.NODEJS_24_X,
-        //     entry: path.join(__dirname, "../../src/handlers/publish-person-created.ts"),
-        //     handler: "publishPersonCreatedHandler",
-        //     environment: {
-        //         PERSON_CREATED_TOPIC_ARN: personCreatedTopic.topicArn,
-        //     },
-        // });
-
         const publisherErrorAlarm = new cloudwatch.Alarm(
             this,
             "PublisherErrorAlarm",
@@ -191,24 +151,23 @@ export class PersonServiceStack extends CoreServiceStack {
             })
         );
 
-        const httpApi = new HttpApi(this, "PersonHttpApi", {
-            apiName: `${baseName}-http-api`,
-        });
+        const httpApi = createHttpApi(this, "PersonHttpApi", {
+            resourceName: "http-api",
+          });
 
-        const createPersonIntegration = new HttpLambdaIntegration("CreatePersonIntegration", createPersonLambda);
-        const listPersonIntegration = new HttpLambdaIntegration("ListPersonIntegration", listPersonLambda);
-
-        httpApi.addRoutes({
+          addHttpLambdaRoute(httpApi, {
+            integrationId: "CreatePersonIntegration",
             path: "/person",
-            methods: [HttpMethod.POST],
-            integration: createPersonIntegration,
-        });
-
-        httpApi.addRoutes({
+            method: HttpMethod.POST,
+            handler: createPersonLambda,
+          });
+          
+          addHttpLambdaRoute(httpApi, {
+            integrationId: "ListPersonIntegration",
             path: "/person",
-            methods: [HttpMethod.GET],
-            integration: listPersonIntegration,
-        });
+            method: HttpMethod.GET,
+            handler: listPersonLambda,
+          });
 
         new CfnOutput(this, "PersonApiBaseUrl", {
             value: httpApi.apiEndpoint,
