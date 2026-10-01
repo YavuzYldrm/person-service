@@ -3,13 +3,13 @@ import { Construct } from 'constructs';
 import { StageConfig } from "../config/stage-config";
 import { FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
 import { HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
-import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import { CoreServiceStack, createDynamoTable, createNodejsFunction, createSnsTopic, addHttpLambdaRoute, createHttpApi } from "core-cdk";
+import { CoreServiceStack, createDynamoTable, createNodejsFunction, createSnsTopic, addHttpLambdaRoute, createHttpApi, addDynamoStreamToLambda } from "core-cdk";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as path from "node:path";
 import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import { Filter } from 'aws-cdk-lib/aws-sns';
 
 type PersonServiceStackProps = StackProps & {
     stageConfig: StageConfig;
@@ -141,15 +141,17 @@ export class PersonServiceStack extends CoreServiceStack {
 
         personCreatedTopic.grantPublish(publishPersonCreatedLambda);
 
-        publishPersonCreatedLambda.addEventSource(
-            new DynamoEventSource(personTable, {
-                startingPosition: StartingPosition.LATEST,
-                batchSize: 1,
-                filters: [FilterCriteria.filter({
+        addDynamoStreamToLambda({
+            table: personTable,
+            handler: publishPersonCreatedLambda,
+            startingPosition: StartingPosition.LATEST,
+            batchSize: 1,
+            filters: [
+                FilterCriteria.filter({
                     eventName: FilterRule.isEqual("INSERT"),
-                })]
-            })
-        );
+                })
+            ]
+        });
 
         const httpApi = createHttpApi(this, "PersonHttpApi", {
             resourceName: "http-api",
