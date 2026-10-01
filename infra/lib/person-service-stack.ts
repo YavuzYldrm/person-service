@@ -1,12 +1,11 @@
 import { CfnOutput, CfnParameter, Duration, RemovalPolicy, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { StageConfig } from "../config/stage-config";
-import { Runtime, FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
-import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { FilterCriteria, FilterRule, StartingPosition } from "aws-cdk-lib/aws-lambda";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import { CoreServiceStack, createDynamoTable } from "core-cdk";
+import { CoreServiceStack, createDynamoTable, createNodejsFunction } from "core-cdk";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as path from "node:path";
@@ -76,35 +75,83 @@ export class PersonServiceStack extends CoreServiceStack {
 
         personCreatedTopic.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
-        const createPersonLambda = new NodejsFunction(this, "CreatePersonLambda", {
-            functionName: `${baseName}-create-person`,
-            entry: path.join(__dirname, "../../src/handlers/create-person.ts"),
-            handler: "createPersonHandler",
-            runtime: Runtime.NODEJS_24_X,
-            environment: {
+        const createPersonLambda = createNodejsFunction(
+            this, 
+            "CreatePersonLambda",
+            {
+                resourceName: "create-person",
+                entry: path.join(
+                    __dirname,
+                    "../../src/handlers/create-person.ts",
+                ),
+                handler: "createPersonHandler",
+                environment: {
+                    PERSON_TABLE_NAME: personTable.tableName,
+                }
+            }
+        )
+
+        const listPersonLambda = createNodejsFunction(
+            this,
+            "ListPersonLambda",
+            {
+              resourceName: "list-person",
+              entry: path.join(
+                __dirname,
+                "../../src/handlers/list-person.ts",
+              ),
+              handler: "listPersonHandler",
+              environment: {
                 PERSON_TABLE_NAME: personTable.tableName,
+              },
             },
-        });
+          );
 
-        const listPersonLambda = new NodejsFunction(this, "ListPersonLambda", {
-            functionName: `${baseName}-list-person`,
-            runtime: Runtime.NODEJS_24_X,
-            entry: path.join(__dirname, "../../src/handlers/list-person.ts"),
-            handler: "listPersonHandler",
-            environment: {
-              PERSON_TABLE_NAME: personTable.tableName,
-            },
-          });
-
-        const publishPersonCreatedLambda = new NodejsFunction(this, "PublishPersonCreatedLambda", {
-            functionName: `${baseName}-publish-person-created`,
-            runtime: Runtime.NODEJS_24_X,
-            entry: path.join(__dirname, "../../src/handlers/publish-person-created.ts"),
-            handler: "publishPersonCreatedHandler",
-            environment: {
+        const publishPersonCreatedLambda = createNodejsFunction(
+            this,
+            "PublishPersonCreatedLambda",
+            {
+                resourceName: "publish-person-created",
+                entry: path.join(
+                __dirname,
+                "../../src/handlers/publish-person-created.ts",
+                ),
+                handler: "publishPersonCreatedHandler",
+                environment: {
                 PERSON_CREATED_TOPIC_ARN: personCreatedTopic.topicArn,
+                },
             },
-        });
+        );
+
+        // const createPersonLambda = new NodejsFunction(this, "CreatePersonLambda", {
+        //     functionName: `${baseName}-create-person`,
+        //     entry: path.join(__dirname, "../../src/handlers/create-person.ts"),
+        //     handler: "createPersonHandler",
+        //     runtime: Runtime.NODEJS_24_X,
+        //     environment: {
+        //         PERSON_TABLE_NAME: personTable.tableName,
+        //     },
+        // });
+
+        // const listPersonLambda = new NodejsFunction(this, "ListPersonLambda", {
+        //     functionName: `${baseName}-list-person`,
+        //     runtime: Runtime.NODEJS_24_X,
+        //     entry: path.join(__dirname, "../../src/handlers/list-person.ts"),
+        //     handler: "listPersonHandler",
+        //     environment: {
+        //       PERSON_TABLE_NAME: personTable.tableName,
+        //     },
+        //   });
+
+        // const publishPersonCreatedLambda = new NodejsFunction(this, "PublishPersonCreatedLambda", {
+        //     functionName: `${baseName}-publish-person-created`,
+        //     runtime: Runtime.NODEJS_24_X,
+        //     entry: path.join(__dirname, "../../src/handlers/publish-person-created.ts"),
+        //     handler: "publishPersonCreatedHandler",
+        //     environment: {
+        //         PERSON_CREATED_TOPIC_ARN: personCreatedTopic.topicArn,
+        //     },
+        // });
 
         const publisherErrorAlarm = new cloudwatch.Alarm(
             this,
